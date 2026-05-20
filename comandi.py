@@ -16,7 +16,6 @@ from utils import (
     async_retry,
     validate_booking_number,
     get_metrics,
-    GRUPPI_AUTORIZZATI,
 )
 from bottoni import _safe_send_message, _safe_edit_message_text
 from text import text_rules, text_assistenza
@@ -358,10 +357,7 @@ async def _execute_admin_command(
     else:
         keyboard = []
         for gid in admin_groups:
-            # Valida che il group_id sia in GRUPPI_AUTORIZZATI
             try:
-                if int(gid) not in GRUPPI_AUTORIZZATI:
-                    continue
                 group_chat = await context.bot.get_chat(gid)
                 group_name = group_chat.title or f"Gruppo {gid}"
             except Exception:
@@ -381,11 +377,9 @@ async def handle_group_selection(update: Update, context: ContextTypes.DEFAULT_T
 
     raw_group_id = query.data[len("select_group_"):]
 
-    # Sicurezza: verifica che il group_id estratto dal callback sia autorizzato
+    # Sicurezza: verifica che l'ID sia numerico e valido
     try:
-        if int(raw_group_id) not in GRUPPI_AUTORIZZATI:
-            await _safe_edit_message_text(query, "❌ Gruppo non autorizzato.")
-            return
+        int(raw_group_id)
     except ValueError:
         await _safe_edit_message_text(query, "❌ ID gruppo non valido.")
         return
