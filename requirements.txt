@@ -1,0 +1,4 @@
+python-telegram-bot==21.9
+firebase-admin
+aiohttp
+python-dotenv
