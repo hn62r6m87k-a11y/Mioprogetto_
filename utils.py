@@ -41,15 +41,9 @@ def get_metrics() -> dict:
 
 DEFAULT_TIMER_DURATION_SECONDS = 30
 
-GRUPPI_AUTORIZZATI: set[int] = set()
-for _cid in os.getenv("GRUPPI_AUTORIZZATI", "").split(","):
-    _cid_str = _cid.strip()
-    if not _cid_str:
-        continue
-    try:
-        GRUPPI_AUTORIZZATI.add(int(_cid_str))
-    except ValueError:
-        print(f"Valore non valido in GRUPPI_AUTORIZZATI: '{_cid_str}'")
+# Nessuna lista di gruppi autorizzati: il bot funziona in qualsiasi gruppo
+# e mantiene dati separati per ciascuno tramite il group_id su Firebase.
+GRUPPI_AUTORIZZATI: set[int] = set()  # Tenuto per compatibilità import, non usato
 
 DEFAULT_CARD_VALUES = [
     [1, 1, 1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1, 1, 2],
@@ -196,10 +190,7 @@ def authorized_group_only(func):
             if update.message:
                 await update.message.reply_text("Questo comando è disponibile solo nei gruppi.")
             else:
-                logger.warning(f"Chat non trovato in authorized_group_only")
-            return
-        if chat.id not in GRUPPI_AUTORIZZATI:
-            logger.info(f"Accesso negato in gruppo non autorizzato: {chat.id}")
+                logger.warning("Chat non trovato in authorized_group_only")
             return
         return await func(update, context, *args, **kwargs)
     return wrapper
@@ -211,23 +202,30 @@ def admin_only(func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
         chat = update.effective_chat
         user = update.effective_user
-        if not chat or chat.id == user.id:
+        # Valido solo nei gruppi
+        if not chat or chat.type not in ('group', 'supergroup'):
+            if update.message:
+                await update.message.reply_text("❌ Questo comando è disponibile solo nei gruppi.")
             return
         try:
             member = await context.bot.get_chat_member(chat_id=chat.id, user_id=user.id)
             if member.status not in ('administrator', 'creator'):
-                await update.message.reply_text("❌ Accesso negato. Comando riservato agli amministratori del gruppo.")
+                if update.message:
+                    await update.message.reply_text("❌ Accesso negato. Comando riservato agli amministratori del gruppo.")
                 return
         except TelegramError as e:
             if "User is not a member" in str(e):
-                await update.message.reply_text("❌ Non sei membro di questo gruppo.")
+                if update.message:
+                    await update.message.reply_text("❌ Non sei membro di questo gruppo.")
             else:
-                await update.message.reply_text("⚠️ Errore temporaneo nella verifica. Riprova.")
+                if update.message:
+                    await update.message.reply_text("⚠️ Errore temporaneo nella verifica. Riprova.")
             logger.error(f"Errore Telegram in admin_only: {e}")
             return
         except Exception as e:
             logger.error(f"Errore inatteso in admin_only: {e}")
-            await update.message.reply_text("⚠️ Errore interno.")
+            if update.message:
+                await update.message.reply_text("⚠️ Errore interno.")
             return
         return await func(update, context, *args, **kwargs)
     return wrapper
@@ -387,12 +385,14 @@ async def get_booking_message_components(
 
 async def find_admin_groups(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> list[str]:
     """
-    Trova tutti i gruppi autorizzati di cui l'utente specificato è admin.
+    Trova tutti i gruppi in cui il bot è presente e l'utente è admin.
+    I gruppi vengono tracciati automaticamente in bot_data['known_groups']
+    ogni volta che il bot riceve un messaggio da un gruppo.
     Restituisce una lista di ID di gruppo (come stringhe).
     """
     admin_in_groups = []
-    grupos_copia = list(GRUPPI_AUTORIZZATI)  # Copia istantanea per thread-safety
-    for group_id in grupos_copia:
+    known_groups = list(context.bot_data.get('known_groups', set()))
+    for group_id in known_groups:
         try:
             member = await context.bot.get_chat_member(chat_id=group_id, user_id=user_id)
             if member.status in ('administrator', 'creator'):
