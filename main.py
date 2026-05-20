@@ -113,6 +113,17 @@ async def start_webserver() -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
+async def track_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Middleware: registra automaticamente ogni gruppo in cui il bot è attivo.
+    Usato da find_admin_groups per sapere in quali gruppi cercare.
+    """
+    chat = update.effective_chat
+    if chat and chat.type in ('group', 'supergroup'):
+        known = context.bot_data.setdefault('known_groups', set())
+        known.add(chat.id)
+
+
 async def run() -> None:
     global application
 
@@ -122,6 +133,9 @@ async def run() -> None:
 
     # --- Gestore globale errori ---
     application.add_error_handler(error_handler)
+
+    # --- Middleware: traccia i gruppi attivi ---
+    application.add_handler(MessageHandler(filters.ALL, track_group), group=-1)
 
     # --- Comandi ---
     application.add_handler(CommandHandler("start", start))
