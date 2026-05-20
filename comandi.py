@@ -7,7 +7,6 @@ import logging
 import asyncio
 
 from utils import (
-    authorized_group_only,
     admin_only,
     refresh_booking_message,
     find_admin_groups,
@@ -220,7 +219,6 @@ async def handle_booking_numbers(update: Update, context: ContextTypes.DEFAULT_T
     await refresh_booking_message(context, group_id)
 
 
-@authorized_group_only
 @admin_only
 async def gira(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
@@ -269,7 +267,6 @@ async def gira(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-@authorized_group_only
 async def visualizza_classifica(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat = update.effective_chat
     topic_id = context.chat_data.get(
@@ -630,7 +627,6 @@ async def reset_leaderboard_command(update: Update, context: ContextTypes.DEFAUL
     await _execute_admin_command(update, context, _reset_leaderboard_logic, '/resetclassigira')
 
 
-@authorized_group_only
 @admin_only
 async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Mostra metriche di sistema per admin."""
