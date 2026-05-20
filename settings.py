@@ -11,7 +11,6 @@ from utils import (
     DEFAULT_CARD_VALUES,
     DEFAULT_CARD_POINTS,
     admin_only,
-    authorized_group_only,
     get_num_sets,
     get_card_values,
     get_card_points,
@@ -107,7 +106,6 @@ async def _is_admin_callback(query: CallbackQuery, context: ContextTypes.DEFAULT
 # Comando /impostazioni
 # ---------------------------------------------------------------------------
 
-@authorized_group_only
 @admin_only
 async def impostazioni_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
