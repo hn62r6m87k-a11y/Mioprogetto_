@@ -471,10 +471,11 @@ async def timer_expired_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     logger.info(f"[TIMER] Scaduto per gruppo {group_id}, set {set_number}")
 
-    # Nei job callback context.chat_data è un mappingproxy read-only.
-    # Bisogna accedere al dict mutabile tramite application.chat_data[chat_id].
+    # In un job callback, context.application.chat_data è un MappingProxyType read-only.
+    # application._chat_data è il defaultdict mutabile sottostante: accedere direttamente
+    # a quello per creare/modificare dati di una chat dal job callback.
     chat_id_int = int(group_id)
-    mutable_chat_data = context.application.chat_data.setdefault(chat_id_int, {})
+    mutable_chat_data = context.application._chat_data[chat_id_int]
     mutable_chat_data['active_set'] = set_number
     mutable_chat_data.setdefault('sessions', {}).setdefault(set_number, {})
 
