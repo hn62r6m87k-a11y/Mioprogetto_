@@ -471,9 +471,12 @@ async def timer_expired_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     logger.info(f"[TIMER] Scaduto per gruppo {group_id}, set {set_number}")
 
-    # Usa context.chat_data che è il dict mutable per questo chat
-    context.chat_data['active_set'] = set_number
-    context.chat_data.setdefault('sessions', {}).setdefault(set_number, {})
+    # Nei job callback context.chat_data è un mappingproxy read-only.
+    # Bisogna accedere al dict mutabile tramite application.chat_data[chat_id].
+    chat_id_int = int(group_id)
+    mutable_chat_data = context.application.chat_data.setdefault(chat_id_int, {})
+    mutable_chat_data['active_set'] = set_number
+    mutable_chat_data.setdefault('sessions', {}).setdefault(set_number, {})
 
     try:
         await _create_end_booking_message(context, group_id, set_number, topic_id)
