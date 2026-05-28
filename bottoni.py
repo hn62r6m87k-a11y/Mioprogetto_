@@ -471,13 +471,9 @@ async def timer_expired_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     logger.info(f"[TIMER] Scaduto per gruppo {group_id}, set {set_number}")
 
-    # In un job callback, context.application.chat_data è un MappingProxyType read-only.
-    # application._chat_data è il defaultdict mutabile sottostante: accedere direttamente
-    # a quello per creare/modificare dati di una chat dal job callback.
-    chat_id_int = int(group_id)
-    mutable_chat_data = context.application._chat_data[chat_id_int]
-    mutable_chat_data['active_set'] = set_number
-    mutable_chat_data.setdefault('sessions', {}).setdefault(set_number, {})
+    # Usa context.chat_data che è il dict mutable per questo chat
+    context.chat_data['active_set'] = set_number
+    context.chat_data.setdefault('sessions', {}).setdefault(set_number, {})
 
     try:
         await _create_end_booking_message(context, group_id, set_number, topic_id)
@@ -762,7 +758,12 @@ async def handle_vai(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
         if points > 0:
             lm = LeaderboardManager(group_id)
-            await async_retry(lm.increment_score, str(donor_id), points)
+            try:
+                await async_retry(lm.increment_score, str(donor_id), points)
+            except ValueError as e:
+                # increment_score solleva ValueError("punteggio_azzerato:N") se il punteggio
+                # sarebbe diventato negativo: impossibile con delta positivo, gestito per robustezza.
+                logger.warning(f"[handle_vai] increment_score inatteso per donor={donor_id}: {e}")
 
             giroset_scores = context.chat_data.setdefault('giroset_scores', {})
             giroset_scores[str(donor_id)] = giroset_scores.get(str(donor_id), 0) + points
