@@ -504,9 +504,64 @@ async def _internal_modify_points(update: Update, context: ContextTypes.DEFAULT_
             target_key = target_user_str
             display_name = target_key
         else:
-            # Normalizza l'username per garantire il prefisso @
+            # Normalizza l'username per garantire il prefisso @ in lowercase
             target_key = target_user_str if target_user_str.startswith('@') else f"@{target_user_str}"
             display_name = target_key
+
+    # --- Deduplicazione classifica ---
+    # Se target_key è un ID numerico, controlla se esiste già in classifica una chiave
+    # @username che corrisponde a quell'utente (aggiunto manualmente in passato) e
+    # consolidala: somma i punti sulla chiave numerica e rimuove quella @username.
+    # Se invece target_key è un @username, cerca se esiste già una chiave numerica
+    # nella classifica il cui username Telegram (da get_chat) coincide — e usa quella.
+    lm = LeaderboardManager(group_id)
+    try:
+        existing_leaderboard = await async_retry(lm.get_leaderboard)
+    except Exception:
+        existing_leaderboard = {}
+
+    if target_key.lstrip('-').isdigit():
+        # target è ID numerico: cerca chiavi @username duplicate da fondere
+        try:
+            tg_user_check = await asyncio.wait_for(context.bot.get_chat(int(target_key)), timeout=5)
+            tg_username_lower = (tg_user_check.username or '').lower()
+        except Exception:
+            tg_username_lower = ''
+
+        if tg_username_lower:
+            at_key = f"@{tg_username_lower}"
+            if at_key in existing_leaderboard:
+                orphan_score = existing_leaderboard[at_key]
+                logger.info(
+                    f"[Dedup] Fusione {at_key} ({orphan_score}pt) → {target_key} per gruppo {group_id}"
+                )
+                try:
+                    # Somma i punti orfani sulla chiave numerica
+                    await async_retry(lm.increment_score, target_key, orphan_score)
+                    # Rimuove la chiave @username orfana
+                    await async_retry(lm.ref.child(at_key).delete)
+                except Exception as e:
+                    logger.warning(f"[Dedup] Errore fusione {at_key} → {target_key}: {e}")
+    else:
+        # target è @username: cerca se esiste già una chiave numerica con lo stesso username
+        username_bare = target_key.lstrip('@').lower()
+        for existing_key in list(existing_leaderboard.keys()):
+            if existing_key.lstrip('-').isdigit():
+                try:
+                    tg_user_check = await asyncio.wait_for(
+                        context.bot.get_chat(int(existing_key)), timeout=5
+                    )
+                    if (tg_user_check.username or '').lower() == username_bare:
+                        # Trovata corrispondenza: usa la chiave numerica esistente
+                        logger.info(
+                            f"[Dedup] @{username_bare} risolto alla chiave numerica {existing_key} "
+                            f"per gruppo {group_id}"
+                        )
+                        target_key = existing_key
+                        display_name = tg_user_check.username or tg_user_check.first_name or existing_key
+                        break
+                except Exception:
+                    continue
 
     # Sicurezza: non permettere di usare l'ID del gruppo come chiave utente
     if str(target_key) == str(group_id):
@@ -523,7 +578,6 @@ async def _internal_modify_points(update: Update, context: ContextTypes.DEFAULT_
         await reply_to_message.reply_text("⚠️ I punti devono essere tra 1 e 10000.")
         return
 
-    lm = LeaderboardManager(group_id)
     points_to_modify = points * sign
 
     logger.info(f"Modifica Punti: Gruppo={group_id}, UtenteKey={target_key}, Punti={points_to_modify}")
