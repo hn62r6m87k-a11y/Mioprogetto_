@@ -16,6 +16,7 @@ from utils import (
     async_retry,
     validate_booking_number,
     get_metrics,
+    GRUPPI_AUTORIZZATI,
 )
 from bottoni import _safe_send_message, _safe_edit_message_text
 from text import text_rules, text_assistenza
@@ -357,7 +358,10 @@ async def _execute_admin_command(
     else:
         keyboard = []
         for gid in admin_groups:
+            # Valida che il group_id sia in GRUPPI_AUTORIZZATI
             try:
+                if int(gid) not in GRUPPI_AUTORIZZATI:
+                    continue
                 group_chat = await context.bot.get_chat(gid)
                 group_name = group_chat.title or f"Gruppo {gid}"
             except Exception:
@@ -377,9 +381,11 @@ async def handle_group_selection(update: Update, context: ContextTypes.DEFAULT_T
 
     raw_group_id = query.data[len("select_group_"):]
 
-    # Sicurezza: verifica che l'ID sia numerico e valido
+    # Sicurezza: verifica che il group_id estratto dal callback sia autorizzato
     try:
-        int(raw_group_id)
+        if int(raw_group_id) not in GRUPPI_AUTORIZZATI:
+            await _safe_edit_message_text(query, "❌ Gruppo non autorizzato.")
+            return
     except ValueError:
         await _safe_edit_message_text(query, "❌ ID gruppo non valido.")
         return
@@ -512,24 +518,50 @@ async def _internal_modify_points(update: Update, context: ContextTypes.DEFAULT_
     points_to_modify = points * sign
 
     logger.info(f"Modifica Punti: Gruppo={group_id}, UtenteKey={target_key}, Punti={points_to_modify}")
-    try:
-        await async_retry(lm.increment_score, str(target_key), points_to_modify)
-    except Exception as e:
-        logger.warning(f"Tentativo di modifica punteggi fallito: {e}")
-        await reply_to_message.reply_text(f"\u26a0\ufe0f Operazione fallita: {str(e)}")
-        return
 
     esc_username = escape_markdown(display_name, version=2)
     action_text = "Aggiunti" if sign == 1 else "Rimossi"
-    leaderboard = await async_retry(lm.get_leaderboard)
-    current_score = leaderboard.get(str(target_key), 0)
+    clamped_to_zero = False
+    new_score = 0
+    is_new_user = False
 
-    await reply_to_message.reply_text(
-        f"✅ *Operazione completata nel gruppo `{group_id}`\\.*\n"
-        f"*{action_text} {points}* punti a {esc_username}\\.\n"
-        f"Nuovo punteggio\\: *{current_score}*",
-        parse_mode=ParseMode.MARKDOWN_V2,
-    )
+    try:
+        new_score, is_new_user = await async_retry(lm.increment_score, str(target_key), points_to_modify)
+    except ValueError as e:
+        err_str = str(e)
+        if err_str.startswith("punteggio_azzerato:"):
+            # La sottrazione avrebbe portato sotto zero: punteggio azzerato a 0
+            clamped_to_zero = True
+            try:
+                new_score = int(err_str.split(":", 1)[1])
+            except (IndexError, ValueError):
+                new_score = 0
+        else:
+            await reply_to_message.reply_text(f"⚠️ Operazione fallita: {err_str}")
+            return
+    except Exception as e:
+        logger.warning(f"Tentativo di modifica punteggi fallito: {e}")
+        await reply_to_message.reply_text(f"⚠️ Operazione fallita: {str(e)}")
+        return
+
+    # Costruzione messaggio di conferma
+    new_user_note = " \\(nuovo utente, inizializzato a 0\\)" if is_new_user else ""
+    esc_group = escape_markdown(str(group_id), version=2)
+
+    if clamped_to_zero:
+        await reply_to_message.reply_text(
+            f"⚠️ *Operazione completata nel gruppo `{esc_group}`\\.*\n"
+            f"*{action_text} {points}* punti a {esc_username}{new_user_note}\\.\n"
+            f"Il punteggio sarebbe diventato negativo: azzerato a *0*\\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+    else:
+        await reply_to_message.reply_text(
+            f"✅ *Operazione completata nel gruppo `{esc_group}`\\.*\n"
+            f"*{action_text} {points}* punti a {esc_username}{new_user_note}\\.\n"
+            f"Nuovo punteggio\\: *{new_score}*",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
 
 
 # ---------------------------------------------------------------------------
