@@ -91,26 +91,42 @@ class LeaderboardManager:
         """Imposta il punteggio di un utente a un valore assoluto."""
         _retry(self.ref.child(user_id).set, score)
 
-    def increment_score(self, user_id: str, delta: int = 1) -> None:
+    def increment_score(self, user_id: str, delta: int) -> tuple:
         """
-        Incrementa il punteggio di un utente di delta in modo atomico,
+        Incrementa (o decrementa) il punteggio di un utente di `delta` in modo atomico,
         usando una transazione Firebase per evitare race condition.
-        SECURITY: Valida delta prima di applicare.
+
+        Comportamento:
+        - Se l'utente NON esiste, viene creato con punteggio 0 e delta viene applicato.
+        - Se l'utente ESISTE, delta viene sommato al punteggio corrente.
+        - Il punteggio non può mai scendere sotto 0: se la sottrazione porterebbe
+          il risultato negativo, viene azzerato a 0 e viene sollevata una ValueError
+          con prefisso 'punteggio_azzerato:' in modo che il chiamante possa
+          informare l'utente in modo chiaro.
+
+        Restituisce: (new_score: int, is_new_user: bool)
+
+        SECURITY: Valida delta prima di applicare (max ±10000).
         """
         if not isinstance(delta, int):
             raise TypeError(f"delta deve essere int, non {type(delta)}")
-        
+
         # VALIDATION: Evita bomba di punteggi o exploit negativi
         if abs(delta) > 10000:
             logger.warning(f"[LeaderboardManager] Tentativo di incremento anomalo user={user_id} delta={delta}")
             raise ValueError(f"delta troppo grande: {delta}")
-        
+
+        result = {'new_score': 0, 'is_new_user': False, 'clamped': False}
+
         def transaction_fn(current_value):
-            new_score = (current_value or 0) + delta
-            # VALIDATION: Punteggio non può essere negativo
+            is_new = current_value is None
+            result['is_new_user'] = is_new
+            base = 0 if is_new else int(current_value)
+            new_score = base + delta
             if new_score < 0:
-                logger.warning(f"[LeaderboardManager] Score negativo bloccato user={user_id} current={current_value} delta={delta}")
-                return current_value or 0
+                result['clamped'] = True
+                new_score = 0
+            result['new_score'] = new_score
             return new_score
 
         try:
@@ -118,6 +134,14 @@ class LeaderboardManager:
         except Exception as e:
             logger.error(f"[LeaderboardManager] Errore increment_score user={user_id} delta={delta}: {e}")
             raise
+
+        if result['clamped']:
+            logger.warning(
+                f"[LeaderboardManager] Score negativo bloccato a 0: user={user_id} delta={delta}"
+            )
+            raise ValueError(f"punteggio_azzerato:{result['new_score']}")
+
+        return result['new_score'], result['is_new_user']
 
     def reset_leaderboard(self) -> None:
         """Pulisce tutte le voci della classifica per questo gruppo."""
