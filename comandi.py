@@ -352,21 +352,30 @@ async def _execute_admin_command(
         await update.message.reply_text("⚠️ Non sei amministratore in nessun gruppo autorizzato.")
         return
 
-    if len(admin_groups) == 1:
-        context.args = [admin_groups[0]] + context.args
+    # Filtra solo i gruppi che sono ancora in GRUPPI_AUTORIZZATI (doppia verifica sicurezza)
+    valid_groups = [gid for gid in admin_groups if int(gid) in GRUPPI_AUTORIZZATI]
+    if not valid_groups:
+        await update.message.reply_text("⚠️ Non sei amministratore in nessun gruppo autorizzato.")
+        return
+
+    if len(valid_groups) == 1:
+        context.args = [valid_groups[0]] + context.args
         await logic_func(update, context)
     else:
         keyboard = []
-        for gid in admin_groups:
-            # Valida che il group_id sia in GRUPPI_AUTORIZZATI
+        for gid in valid_groups:
+            # Recupera il nome del gruppo; usa fallback se get_chat fallisce
             try:
-                if int(gid) not in GRUPPI_AUTORIZZATI:
-                    continue
                 group_chat = await context.bot.get_chat(gid)
                 group_name = group_chat.title or f"Gruppo {gid}"
             except Exception:
                 group_name = f"Gruppo {gid}"
+            # keyboard.append SEMPRE eseguito, indipendentemente da get_chat
             keyboard.append([InlineKeyboardButton(group_name, callback_data=f"select_group_{gid}")])
+
+        if not keyboard:
+            await update.message.reply_text("⚠️ Nessun gruppo disponibile. Riprova tra qualche secondo.")
+            return
 
         await update.message.reply_text(
             "Seleziona il gruppo in cui eseguire il comando:",
