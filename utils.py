@@ -41,9 +41,15 @@ def get_metrics() -> dict:
 
 DEFAULT_TIMER_DURATION_SECONDS = 30
 
-# Nessuna lista di gruppi autorizzati: il bot funziona in qualsiasi gruppo
-# e mantiene dati separati per ciascuno tramite il group_id su Firebase.
-GRUPPI_AUTORIZZATI: set[int] = set()  # Tenuto per compatibilità import, non usato
+GRUPPI_AUTORIZZATI: set[int] = set()
+for _cid in os.getenv("GRUPPI_AUTORIZZATI", "").split(","):
+    _cid_str = _cid.strip()
+    if not _cid_str:
+        continue
+    try:
+        GRUPPI_AUTORIZZATI.add(int(_cid_str))
+    except ValueError:
+        print(f"Valore non valido in GRUPPI_AUTORIZZATI: '{_cid_str}'")
 
 DEFAULT_CARD_VALUES = [
     [1, 1, 1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1, 1, 2],
@@ -190,7 +196,10 @@ def authorized_group_only(func):
             if update.message:
                 await update.message.reply_text("Questo comando è disponibile solo nei gruppi.")
             else:
-                logger.warning("Chat non trovato in authorized_group_only")
+                logger.warning(f"Chat non trovato in authorized_group_only")
+            return
+        if chat.id not in GRUPPI_AUTORIZZATI:
+            logger.info(f"Accesso negato in gruppo non autorizzato: {chat.id}")
             return
         return await func(update, context, *args, **kwargs)
     return wrapper
@@ -202,10 +211,14 @@ def admin_only(func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
         chat = update.effective_chat
         user = update.effective_user
-        # Valido solo nei gruppi
+        # Comando valido solo nei gruppi (non in chat privata col bot)
         if not chat or chat.type not in ('group', 'supergroup'):
             if update.message:
-                await update.message.reply_text("❌ Questo comando è disponibile solo nei gruppi.")
+                await update.message.reply_text("❌ Questo comando è disponibile solo nei gruppi autorizzati.")
+            return
+        # Verifica che il gruppo sia autorizzato
+        if chat.id not in GRUPPI_AUTORIZZATI:
+            logger.info(f"[admin_only] Gruppo non autorizzato: {chat.id}")
             return
         try:
             member = await context.bot.get_chat_member(chat_id=chat.id, user_id=user.id)
@@ -385,20 +398,36 @@ async def get_booking_message_components(
 
 async def find_admin_groups(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> list[str]:
     """
-    Trova tutti i gruppi in cui il bot è presente e l'utente è admin.
-    I gruppi vengono tracciati automaticamente in bot_data['known_groups']
-    ogni volta che il bot riceve un messaggio da un gruppo.
+    Trova tutti i gruppi autorizzati di cui l'utente specificato è admin.
+    Considera sia gli admin Telegram (administrator/creator) sia gli admin
+    custom registrati su Firebase tramite AdminManager.
     Restituisce una lista di ID di gruppo (come stringhe).
     """
     admin_in_groups = []
-    known_groups = list(context.bot_data.get('known_groups', set()))
-    for group_id in known_groups:
+    grupos_copia = list(GRUPPI_AUTORIZZATI)  # Copia istantanea per thread-safety
+    for group_id in grupos_copia:
+        is_admin = False
+
+        # 1) Controlla lo stato Telegram
         try:
             member = await context.bot.get_chat_member(chat_id=group_id, user_id=user_id)
             if member.status in ('administrator', 'creator'):
-                admin_in_groups.append(str(group_id))
+                is_admin = True
         except Exception:
-            continue
+            pass
+
+        # 2) Se non è admin Telegram, controlla la lista custom Firebase
+        if not is_admin:
+            try:
+                am = AdminManager(str(group_id))
+                if await async_retry(am.is_admin, str(user_id)):
+                    is_admin = True
+            except Exception:
+                pass
+
+        if is_admin:
+            admin_in_groups.append(str(group_id))
+
     return admin_in_groups
 
 
